@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WebLLM Local for OpenNTF 2026 — In-Browser Inference Demo</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --panel-raised: #eef1f4;
+    --line: #d8dee5;
+    --text: #1c2733;
+    --muted: #66707c;
+    --accent: #0b5fa5;
+    --accent-dim: #bcdaf2;
+    --ok: #1f8a5f;
+    --ok-dim: #cdeee0;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+
+  body {
+    display: flex;
+    justify-content: center;
+    padding: 48px 20px 80px;
+    min-height: 100vh;
+  }
+
+  main {
+    width: 100%;
+    max-width: 720px;
+  }
+
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 46ch;
+  }
+
+  .pill {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    white-space: nowrap;
+    transition: all 0.25s ease;
+  }
+  .pill.loading { color: var(--accent); border-color: var(--accent-dim); background: rgba(11,95,165,0.08); }
+  .pill.ready { color: var(--ok); border-color: var(--ok-dim); background: rgba(31,138,95,0.08); }
+  .pill.error { color: #b3372c; border-color: #f0c4bd; background: rgba(179,55,44,0.08); }
+
+  section {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    padding: 10px 14px 0;
+    letter-spacing: 0.02em;
+  }
+
+  /* Model switcher */
+  .model-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px 14px;
+    flex-wrap: wrap;
+  }
+
+  .model-btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    padding: 8px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .model-btn:hover { border-color: #98a2ae; color: var(--text); }
+  .model-btn.active {
+    color: var(--bg);
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .model-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Progress */
+  .progress-wrap {
+    padding: 0 14px 14px;
+    display: none;
+  }
+  .progress-wrap.visible { display: block; }
+  .progress-track {
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--panel-raised);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+  .progress-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* Chat log */
+  #log {
+    height: 340px;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .msg { font-size: 14.5px; line-height: 1.55; }
+  .msg .role {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
+  }
+  .msg.user .role { color: #3d6f9e; }
+  .msg.assistant .role { color: var(--accent); }
+  .msg .body { white-space: pre-wrap; word-wrap: break-word; }
+  .empty-state {
+    margin: auto;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    max-width: 34ch;
+    line-height: 1.6;
+  }
+
+  /* Input row */
+  .input-row {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--line);
+  }
+  #input {
+    flex: 1;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 5px;
+    font-size: 14px;
+    font-family: var(--sans);
+    resize: none;
+  }
+  #input:focus { outline: none; border-color: #98a2ae; }
+  #send {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    padding: 0 18px;
+    border-radius: 5px;
+    font-weight: 650;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #send:disabled { background: var(--panel-raised); color: var(--muted); cursor: not-allowed; }
+  #stop {
+    background: #b3372c;
+    color: #fff;
+    border: none;
+    padding: 0 18px;
+    border-radius: 5px;
+    font-weight: 650;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #stop:hover { background: #962c23; }
+  #newChat {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    padding: 0 14px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  #newChat:hover { border-color: #98a2ae; color: var(--text); }
+
+  /* Stats footer */
+  .stats {
+    display: flex;
+    gap: 22px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .stats b { color: var(--text); font-weight: 600; }
+
+  .version-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  .offline-note {
+    font-size: 12px;
+    color: var(--ok);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .offline-note.visible { display: flex; }
+  .offline-note::before { content: "●"; font-size: 8px; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+  /* Model info popover */
+  .model-popover {
+    position: fixed;
+    display: none;
+    pointer-events: none;
+    z-index: 10;
+    min-width: 190px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    box-shadow: 0 8px 24px rgba(28,39,51,0.14);
+  }
+  .model-popover.visible { display: block; }
+  .model-popover .mp-name {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .model-popover .mp-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 0;
+  }
+  .model-popover .mp-row b { color: var(--text); font-weight: 600; }
+  .model-popover .mp-flag {
+    margin-top: 6px;
+    font-size: 10.5px;
+    color: var(--ok);
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>WebLLM Local for OpenNTF 2026</h1>
+      <p>A language model running entirely inside this browser tab via WebGPU. No server, no API key, nothing leaves this machine.</p>
+    </div>
+    <div class="pill" id="statePill">not loaded</div>
+  </header>
+
+  <section>
+    <div class="section-label">MODEL</div>
+    <div class="model-row" id="modelRow"></div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">—</div>
+    </div>
+    <div class="model-popover" id="modelPopover"></div>
+  </section>
+
+  <section>
+    <div id="log">
+      <div class="empty-state" id="emptyState">Pick a model above to load it, then start chatting.<br>Once it says "ready", you can disconnect from the network.</div>
+    </div>
+    <div class="input-row">
+      <input id="input" type="text" placeholder="Ask it something…" disabled />
+      <button id="send" disabled>Send</button>
+      <button id="stop" style="display:none;">Stop</button>
+      <button id="newChat">New Chat</button>
+    </div>
+    <div class="stats">
+      <span>tok/s <b id="statTps">—</b></span>
+      <span>first token <b id="statTtft">—</b></span>
+      <span>tokens <b id="statTokens">—</b></span>
+    </div>
+  </section>
+
+  <div class="version-tag">(v180926)</div>
+
+  <div class="offline-note" id="offlineNote">Model cached in this tab — safe to disconnect from the network now.</div>
+</main>
+
+<script type="module">
+  import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+  const statePill = document.getElementById("statePill");
+  const modelRow = document.getElementById("modelRow");
+  const progressWrap = document.getElementById("progressWrap");
+  const progressFill = document.getElementById("progressFill");
+  const progressText = document.getElementById("progressText");
+  const log = document.getElementById("log");
+  let emptyState = document.getElementById("emptyState");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const statTps = document.getElementById("statTps");
+  const statTtft = document.getElementById("statTtft");
+  const statTokens = document.getElementById("statTokens");
+  const offlineNote = document.getElementById("offlineNote");
+  const modelPopover = document.getElementById("modelPopover");
+  const newChatBtn = document.getElementById("newChat");
+  const stopBtn = document.getElementById("stop");
+
+  let engine = null;
+  let currentModelId = null;
+  let busy = false;
+
+  // --- Explicit shortlist of small, fast prebuilt models for the live demo ---
+  const DEMO_FAMILIES = [
+    "Llama-3.2-3B",
+    "Gemma-2-2b-it",
+  ];
+
+  function pickDemoModels() {
+    const all = webllm.prebuiltAppConfig.model_list;
+    const sized = all.map((m) => {
+      const match = m.model_id.match(/([\d.]+)\s*B/i);
+      const size = match ? parseFloat(match[1]) : Infinity;
+      const prefersQuant = /q4f16_1/i.test(m.model_id) ? 0 : 1;
+      return { ...m, size, prefersQuant };
+    });
+
+    const picks = [];
+    for (const family of DEMO_FAMILIES) {
+      const candidates = sized
+        .filter((m) => m.model_id.toLowerCase().includes(family.toLowerCase()))
+        .sort((a, b) => a.prefersQuant - b.prefersQuant);
+      if (candidates.length) picks.push(candidates[0]);
+    }
+    return picks;
+  }
+
+  function shortLabel(modelId) {
+    return modelId
+      .replace(/-q[0-9a-z_]+-MLC.*/i, "")
+      .replace(/-Instruct/i, "")
+      .replace(/-/g, " ");
+  }
+
+  function describeModel(m) {
+    const quant = (m.model_id.match(/-([qQ][0-9a-z_]+)-MLC/) || [])[1] || "—";
+    const params = Number.isFinite(m.size) ? `${m.size}B` : "—";
+    const ctx = m.overrides?.context_window_size > 0
+      ? m.overrides.context_window_size.toLocaleString() + " tok"
+      : "model default";
+    const vram = m.vram_required_MB ? `~${Math.round(m.vram_required_MB).toLocaleString()} MB` : "—";
+    return { params, quant, ctx, vram, lowResource: !!m.low_resource_required };
+  }
+
+  // --- Actual weight-shard download size, fetched from the HF repo's file listing ---
+  const fileSizeCache = new Map();
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+    const gb = bytes / 1024 ** 3;
+    return gb >= 1 ? gb.toFixed(2) + " GB" : Math.round(bytes / 1024 ** 2) + " MB";
+  }
+
+  async function fetchModelFileSize(m) {
+    if (fileSizeCache.has(m.model_id)) return fileSizeCache.get(m.model_id);
+    try {
+      const apiUrl = m.model.replace("https://huggingface.co/", "https://huggingface.co/api/models/") + "?blobs=true";
+      const res = await fetch(apiUrl);
+      if (!res.ok) throw new Error("HF API request failed: " + res.status);
+      const data = await res.json();
+      const bytes = (data.siblings || [])
+        .filter((f) => /\.bin$/i.test(f.rfilename))
+        .reduce((sum, f) => sum + (f.size ?? f.lfs?.size ?? 0), 0);
+      fileSizeCache.set(m.model_id, bytes || null);
+    } catch (err) {
+      fileSizeCache.set(m.model_id, null);
+    }
+    return fileSizeCache.get(m.model_id);
+  }
+
+  function showModelPopover(btn, m) {
+    const info = describeModel(m);
+    modelPopover.dataset.modelId = m.model_id;
+    const cachedBytes = fileSizeCache.get(m.model_id);
+    const sizeText = cachedBytes === undefined ? "fetching…" : formatBytes(cachedBytes);
+    modelPopover.innerHTML = `
+      <div class="mp-name">${shortLabel(m.model_id)}</div>
+      <div class="mp-row"><span>params</span><b>${info.params}</b></div>
+      <div class="mp-row"><span>quant</span><b>${info.quant}</b></div>
+      <div class="mp-row"><span>download</span><b id="mpSize">${sizeText}</b></div>
+      <div class="mp-row"><span>context</span><b>${info.ctx}</b></div>
+      <div class="mp-row"><span>vram</span><b>${info.vram}</b></div>
+      ${info.lowResource ? '<div class="mp-flag">low-resource friendly</div>' : ""}
+    `;
+    modelPopover.classList.add("visible");
+
+    const btnRect = btn.getBoundingClientRect();
+    const popRect = modelPopover.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(8, btnRect.left),
+      window.innerWidth - popRect.width - 8
+    );
+    modelPopover.style.left = left + "px";
+    modelPopover.style.top = btnRect.bottom + 6 + "px";
+
+    if (cachedBytes === undefined) {
+      fetchModelFileSize(m).then((bytes) => {
+        if (modelPopover.dataset.modelId !== m.model_id) return;
+        const el = modelPopover.querySelector("#mpSize");
+        if (el) el.textContent = formatBytes(bytes);
+      });
+    }
+  }
+
+  function hideModelPopover() {
+    modelPopover.classList.remove("visible");
+  }
+
+  function setPill(state, text) {
+    statePill.className = "pill" + (state ? " " + state : "");
+    statePill.textContent = text;
+  }
+
+  function setModelButtonsDisabled(disabled) {
+    [...modelRow.children].forEach((b) => (b.disabled = disabled));
+  }
+
+  // Some prebuilt records (e.g. Gemma 3) only override context_window_size, but the
+  // model's own mlc-chat-config.json (fetched at load time, not visible here) still
+  // has a positive sliding_window_size — WebLLM rejects having both set. Since an
+  // explicit context_window_size override means "use this, not the sliding window",
+  // always force sliding_window_size off alongside it.
+  function fixWindowOverrides(m) {
+    const overrides = { ...(m.overrides || {}) };
+    if (overrides.context_window_size > 0) {
+      overrides.sliding_window_size = -1;
+      return { ...m, overrides };
+    }
+    return m;
+  }
+
+  const demoModels = pickDemoModels().map(fixWindowOverrides);
+  const demoAppConfig = { ...webllm.prebuiltAppConfig, model_list: demoModels };
+  demoModels.forEach((m, i) => {
+    const btn = document.createElement("button");
+    btn.className = "model-btn";
+    btn.textContent = shortLabel(m.model_id);
+    btn.dataset.modelId = m.model_id;
+    btn.addEventListener("click", () => loadModel(m.model_id, btn));
+    btn.addEventListener("mouseenter", () => showModelPopover(btn, m));
+    btn.addEventListener("focus", () => showModelPopover(btn, m));
+    btn.addEventListener("mouseleave", hideModelPopover);
+    btn.addEventListener("blur", hideModelPopover);
+    modelRow.appendChild(btn);
+  });
+
+  async function loadModel(modelId, btnEl) {
+    if (busy) return;
+    if (!navigator.gpu) {
+      setPill("error", "no webgpu");
+      progressWrap.classList.add("visible");
+      progressText.textContent = "This browser doesn't expose WebGPU. Try a recent Chrome or Edge.";
+      return;
+    }
+
+    busy = true;
+    currentModelId = modelId;
+    offlineNote.classList.remove("visible");
+    setModelButtonsDisabled(true);
+    [...modelRow.children].forEach((b) => b.classList.toggle("active", b === btnEl));
+    input.disabled = true;
+    sendBtn.disabled = true;
+    setPill("loading", "loading…");
+    progressWrap.classList.add("visible");
+    progressFill.style.width = "0%";
+    progressText.textContent = "Starting…";
+
+    const initProgressCallback = (report) => {
+      const pct = Math.round((report.progress || 0) * 100);
+      progressFill.style.width = pct + "%";
+      progressText.textContent = report.text;
+    };
+
+    try {
+      if (!engine) {
+        engine = await webllm.CreateMLCEngine(modelId, { initProgressCallback, appConfig: demoAppConfig });
+      } else {
+        engine.setInitProgressCallback(initProgressCallback);
+        await engine.reload(modelId);
+      }
+      setPill("ready", "ready");
+      progressFill.style.width = "100%";
+      progressText.textContent = "Loaded. Fully cached in this browser tab.";
+      offlineNote.classList.add("visible");
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    } catch (err) {
+      console.error(err);
+      setPill("error", "load failed");
+      progressText.textContent = "Error: " + (err?.message || err);
+    } finally {
+      busy = false;
+      setModelButtonsDisabled(false);
+    }
+  }
+
+  function addMessage(role, text) {
+    if (emptyState) {
+      emptyState.remove();
+      emptyState = null;
+    }
+    const el = document.createElement("div");
+    el.className = "msg " + role;
+    el.innerHTML = `<span class="role">${role}</span><span class="body"></span>`;
+    el.querySelector(".body").textContent = text;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el.querySelector(".body");
+  }
+
+  const history = [];
+  let stopRequested = false;
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text || busy || !engine) return;
+    busy = true;
+    stopRequested = false;
+    input.value = "";
+    input.disabled = true;
+    sendBtn.disabled = true;
+    sendBtn.style.display = "none";
+    stopBtn.style.display = "inline-block";
+
+    addMessage("user", text);
+    history.push({ role: "user", content: text });
+    const bodyEl = addMessage("assistant", "");
+
+    const start = performance.now();
+    let firstTokenAt = null;
+    let tokenCount = 0;
+    let full = "";
+
+    try {
+      const stream = await engine.chat.completions.create({
+        messages: history,
+        stream: true,
+      });
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta?.content || "";
+        if (delta) {
+          if (firstTokenAt === null) firstTokenAt = performance.now();
+          tokenCount += 1;
+          full += delta;
+          bodyEl.textContent = full;
+          log.scrollTop = log.scrollHeight;
+        }
+      }
+
+      if (stopRequested) bodyEl.textContent = full + " [stopped]";
+      history.push({ role: "assistant", content: full });
+
+      const totalSec = (performance.now() - start) / 1000;
+      const ttft = firstTokenAt ? Math.round(firstTokenAt - start) : 0;
+      const tps = tokenCount > 0 ? (tokenCount / totalSec).toFixed(1) : "0";
+      statTps.textContent = tps;
+      statTtft.textContent = ttft + "ms";
+      statTokens.textContent = tokenCount;
+    } catch (err) {
+      if (stopRequested) {
+        bodyEl.textContent = full + " [stopped]";
+        history.push({ role: "assistant", content: full });
+      } else {
+        console.error(err);
+        bodyEl.textContent = "Error: " + (err?.message || err);
+      }
+    } finally {
+      busy = false;
+      stopBtn.style.display = "none";
+      sendBtn.style.display = "inline-block";
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  function clearChat() {
+    if (busy) return;
+    history.length = 0;
+    log.innerHTML = "";
+    emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.id = "emptyState";
+    emptyState.innerHTML = 'Pick a model above to load it, then start chatting.<br>Once it says "ready", you can disconnect from the network.';
+    log.appendChild(emptyState);
+    statTps.textContent = "—";
+    statTtft.textContent = "—";
+    statTokens.textContent = "—";
+    if (!input.disabled) input.focus();
+  }
+
+  function stopGeneration() {
+    if (!busy || !engine) return;
+    stopRequested = true;
+    engine.interruptGenerate();
+  }
+
+  sendBtn.addEventListener("click", send);
+  stopBtn.addEventListener("click", stopGeneration);
+  newChatBtn.addEventListener("click", clearChat);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+</script>
+</body>
+</html>
